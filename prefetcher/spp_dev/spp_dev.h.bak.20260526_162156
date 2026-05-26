@@ -3,7 +3,6 @@
 
 #include <cstdint>
 #include <vector>
-#include <fstream>
 
 #include "cache.h"
 #include "modules.h"
@@ -175,11 +174,6 @@ struct spp_dev : public champsim::modules::prefetcher {
   PATTERN_TABLE PT;
   PREFETCH_FILTER FILTER;
   GLOBAL_REGISTER GHR;
-
-  // Post-prefetch-filter experiment logger.
-  // Opened only when SPP_CAND_LOG is set.
-  std::ofstream cand_log_;
-  uint64_t cand_id_ = 0;
 };
 
 #endif
