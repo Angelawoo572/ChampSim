@@ -146,22 +146,7 @@ uint32_t spp_dev::prefetcher_cache_fill(champsim::address addr, long set, long w
   return metadata_in;
 }
 
-void spp_dev::prefetcher_final_stats()
-{
-  uint64_t issued = GHR.pf_issued;
-  uint64_t useful = GHR.pf_useful;
-  uint64_t useless = (issued >= useful) ? (issued - useful) : 0;
-  double accuracy = (issued > 0) ? static_cast<double>(useful) / static_cast<double>(issued) : 0.0;
-
-  std::cout << "SPP_FINAL"
-            << " pf_requested=" << issued
-            << " pf_issued=" << issued
-            << " pf_useful=" << useful
-            << " pf_useless=" << useless
-            << " pf_accuracy=" << accuracy
-            << std::endl;
-}
-
+void spp_dev::prefetcher_final_stats() {}
 
 // TODO: Find a good 64-bit hash function
 uint64_t spp_dev::get_hash(uint64_t key)
