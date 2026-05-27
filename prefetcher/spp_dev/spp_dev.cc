@@ -7,6 +7,26 @@
 
 void spp_dev::prefetcher_initialize()
 {
+  const char* full_path = std::getenv("SPP_FULL_LOG");
+  if (full_path && full_path[0] != 0) {
+    full_log_.open(full_path);
+    if (full_log_.is_open()) {
+      full_log_ << "event,event_id,cand_id,addr,addr_line,page,page_offset,ip,cache_hit,useful_prefetch,access_type,metadata_in,last_sig,curr_sig,observed_delta,global_accuracy,pf_issued_ctr,pf_useful_ctr,mshr_occ,mshr_size,rq_occ,rq_size,wq_occ,wq_size,pq_occ,pq_size,pt_set,pt_way,pt_delta,pt_c_delta,pt_c_sig,local_conf,pf_conf,lookahead_way,lookahead_conf,pf_q_head,pf_q_tail,depth,cand_index,base_addr,pf_addr,pf_line,pf_page,pf_page_offset,cand_delta,cand_conf,threshold_pass,fill_l2,same_page,filter_pass,issued,ghr_update,evicted_addr,set,way,prefetch,metadata_out" << std::endl;
+    }
+  }
+
+  const char* table_path = std::getenv("SPP_TABLE_LOG");
+  if (table_path && table_path[0] != 0) {
+    table_log_.open(table_path);
+    if (table_log_.is_open()) {
+      table_log_ << "event,snapshot_id,reason,access_count,addr,ip,last_sig,curr_sig,observed_delta,depth,table_set,table_way,valid,tag,last_offset,sig,lru,delta,c_delta,c_sig,local_conf,useful,remainder_tag,ghr_index,confidence,offset,global_accuracy,pf_issued,pf_useful" << std::endl;
+    }
+  }
+
+  const char* dump_every = std::getenv("SPP_TABLE_DUMP_EVERY");
+  if (dump_every && dump_every[0] != 0)
+    table_dump_every_ = static_cast<std::size_t>(std::strtoull(dump_every, nullptr, 10));
+
   const char* cand_path = std::getenv("SPP_CAND_LOG");
   if (cand_path && cand_path[0] != 0) {
     cand_log_.open(cand_path);
@@ -55,6 +75,21 @@ uint32_t spp_dev::prefetcher_cache_operate(champsim::address addr, champsim::add
   }
   confidence_q[0] = 100;
   GHR.global_accuracy = GHR.pf_issued ? ((100 * GHR.pf_useful) / GHR.pf_issued) : 0;
+  access_count_++;
+
+  auto qsum = [](const auto& xs) -> std::size_t {
+    std::size_t total = 0;
+    for (auto x : xs) total += static_cast<std::size_t>(x);
+    return total;
+  };
+  auto mshr_occ = [&]() -> std::size_t { return intern_ ? intern_->get_mshr_occupancy() : 0; };
+  auto mshr_size = [&]() -> std::size_t { return intern_ ? intern_->get_mshr_size() : 0; };
+  auto rq_occ = [&]() -> std::size_t { return intern_ ? qsum(intern_->get_rq_occupancy()) : 0; };
+  auto rq_size = [&]() -> std::size_t { return intern_ ? qsum(intern_->get_rq_size()) : 0; };
+  auto wq_occ = [&]() -> std::size_t { return intern_ ? qsum(intern_->get_wq_occupancy()) : 0; };
+  auto wq_size = [&]() -> std::size_t { return intern_ ? qsum(intern_->get_wq_size()) : 0; };
+  auto pq_occ = [&]() -> std::size_t { return intern_ ? qsum(intern_->get_pq_occupancy()) : 0; };
+  auto pq_size = [&]() -> std::size_t { return intern_ ? qsum(intern_->get_pq_size()) : 0; };
 
   if constexpr (SPP_DEBUG_PRINT) {
     std::cout << std::endl << "[ChampSim] " << __func__ << " addr: " << addr;
@@ -65,6 +100,38 @@ uint32_t spp_dev::prefetcher_cache_operate(champsim::address addr, champsim::add
   // last_sig and delta are used to update (sig, delta) correlation in PT
   // curr_sig is used to read prefetch candidates in PT
   ST.read_and_update_sig(addr, last_sig, curr_sig, delta);
+
+  if (full_log_.is_open()) {
+    full_log_ << "ACCESS"
+              << ',' << full_event_id_++
+              << ',' << 0
+              << ',' << addr.template to<uint64_t>()
+              << ',' << (addr.template to<uint64_t>() >> LOG2_BLOCK_SIZE)
+              << ',' << champsim::page_number{addr}.template to<uint64_t>()
+              << ',' << spp_dev::offset_type{addr}.template to<uint64_t>()
+              << ',' << ip.template to<uint64_t>()
+              << ',' << static_cast<uint32_t>(cache_hit)
+              << ',' << static_cast<uint32_t>(useful_prefetch)
+              << ',' << static_cast<int>(type)
+              << ',' << metadata_in
+              << ',' << last_sig << ',' << curr_sig << ',' << delta
+              << ',' << GHR.global_accuracy << ',' << GHR.pf_issued << ',' << GHR.pf_useful
+              << ',' << mshr_occ() << ',' << mshr_size()
+              << ',' << rq_occ() << ',' << rq_size()
+              << ',' << wq_occ() << ',' << wq_size()
+              << ',' << pq_occ() << ',' << pq_size()
+              << ',' << 0 << ',' << 0 << ',' << 0 << ',' << 0 << ',' << 0 << ',' << 0 << ',' << 0
+              << ',' << 0 << ',' << 0 << ',' << 0 << ',' << 0 << ',' << depth << ',' << 0
+              << ',' << addr.template to<uint64_t>()
+              << ',' << 0 << ',' << 0 << ',' << 0 << ',' << 0
+              << ',' << 0 << ',' << 0
+              << ',' << 0 << ',' << 0 << ',' << 0 << ',' << 0 << ',' << 0 << ',' << 0
+              << ',' << 0 << ',' << 0 << ',' << 0 << ',' << 0 << ',' << metadata_in
+              << std::endl;
+  }
+
+  if (table_log_.is_open() && table_dump_every_ != 0 && (access_count_ % table_dump_every_) == 0)
+    log_all_spp_tables("ACCESS_PERIODIC", addr, ip, last_sig, curr_sig, delta, depth);
 
   // Also check the prefetch filter in parallel to update global accuracy counters
   FILTER.check(addr, spp_dev::L2C_DEMAND);
@@ -99,6 +166,40 @@ uint32_t spp_dev::prefetcher_cache_operate(champsim::address addr, champsim::add
   do {
     uint32_t lookahead_way = PT_WAY;
     PT.read_pattern(curr_sig, delta_q, confidence_q, lookahead_way, lookahead_conf, pf_q_tail, depth);
+
+    if (full_log_.is_open()) {
+      uint32_t pt_set_snapshot = get_hash(curr_sig) % PT_SET;
+      full_log_ << "PT_READ"
+                << ',' << full_event_id_++
+                << ',' << 0
+                << ',' << addr.template to<uint64_t>()
+                << ',' << (addr.template to<uint64_t>() >> LOG2_BLOCK_SIZE)
+                << ',' << champsim::page_number{addr}.template to<uint64_t>()
+                << ',' << spp_dev::offset_type{addr}.template to<uint64_t>()
+                << ',' << ip.template to<uint64_t>()
+                << ',' << static_cast<uint32_t>(cache_hit)
+                << ',' << static_cast<uint32_t>(useful_prefetch)
+                << ',' << static_cast<int>(type)
+                << ',' << metadata_in
+                << ',' << last_sig << ',' << curr_sig << ',' << delta
+                << ',' << GHR.global_accuracy << ',' << GHR.pf_issued << ',' << GHR.pf_useful
+                << ',' << mshr_occ() << ',' << mshr_size()
+                << ',' << rq_occ() << ',' << rq_size()
+                << ',' << wq_occ() << ',' << wq_size()
+                << ',' << pq_occ() << ',' << pq_size()
+                << ',' << pt_set_snapshot
+                << ',' << lookahead_way
+                << ',' << 0 << ',' << 0 << ',' << PT.c_sig[pt_set_snapshot]
+                << ',' << 0 << ',' << 0
+                << ',' << lookahead_way << ',' << lookahead_conf
+                << ',' << pf_q_head << ',' << pf_q_tail << ',' << depth << ',' << 0
+                << ',' << base_addr.template to<uint64_t>()
+                << ',' << 0 << ',' << 0 << ',' << 0 << ',' << 0
+                << ',' << 0 << ',' << 0
+                << ',' << 0 << ',' << 0 << ',' << 0 << ',' << 0 << ',' << 0 << ',' << 0
+                << ',' << 0 << ',' << 0 << ',' << 0 << ',' << 0 << ',' << metadata_in
+                << std::endl;
+    }
 
     do_lookahead = 0;
     for (uint32_t i = pf_q_head; i < pf_q_tail; i++) {
@@ -200,6 +301,19 @@ uint32_t spp_dev::prefetcher_cache_fill(champsim::address addr, long set, long w
 
 void spp_dev::prefetcher_final_stats()
 {
+  if (table_log_.is_open())
+    log_all_spp_tables("FINAL", champsim::address{}, champsim::address{}, 0, 0, 0, 0);
+
+  if (full_log_.is_open()) {
+    full_log_.flush();
+    full_log_.close();
+  }
+
+  if (table_log_.is_open()) {
+    table_log_.flush();
+    table_log_.close();
+  }
+
   if (cand_log_.is_open()) {
     cand_log_.flush();
     cand_log_.close();
@@ -219,6 +333,109 @@ void spp_dev::prefetcher_final_stats()
             << std::endl;
 }
 
+
+
+
+void spp_dev::log_all_spp_tables(const char* reason, champsim::address addr, champsim::address ip,
+                                 uint32_t last_sig, uint32_t curr_sig,
+                                 typename offset_type::difference_type observed_delta, uint32_t depth)
+{
+  if (!table_log_.is_open())
+    return;
+
+  const uint64_t sid = table_snapshot_id_++;
+
+  table_log_ << "SNAPSHOT_BEGIN"
+             << ',' << sid << ',' << reason << ',' << access_count_
+             << ',' << addr.template to<uint64_t>()
+             << ',' << ip.template to<uint64_t>()
+             << ',' << last_sig << ',' << curr_sig << ',' << observed_delta << ',' << depth
+             << ",0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0"
+             << std::endl;
+
+  for (uint32_t set = 0; set < ST_SET; set++) {
+    for (uint32_t way = 0; way < ST_WAY; way++) {
+      table_log_ << "ST_ENTRY"
+                 << ',' << sid << ',' << reason << ',' << access_count_
+                 << ',' << addr.template to<uint64_t>()
+                 << ',' << ip.template to<uint64_t>()
+                 << ',' << last_sig << ',' << curr_sig << ',' << observed_delta << ',' << depth
+                 << ',' << set << ',' << way
+                 << ',' << static_cast<uint32_t>(ST.valid[set][way])
+                 << ',' << ST.tag[set][way].template to<uint64_t>()
+                 << ',' << ST.last_offset[set][way].template to<uint64_t>()
+                 << ',' << ST.sig[set][way]
+                 << ',' << ST.lru[set][way]
+                 << ",0,0,0,0,0,0,0,0,0,0,0,0"
+                 << std::endl;
+    }
+  }
+
+  for (uint32_t set = 0; set < PT_SET; set++) {
+    for (uint32_t way = 0; way < PT_WAY; way++) {
+      uint32_t local_conf = PT.c_sig[set] ? (100 * PT.c_delta[set][way]) / PT.c_sig[set] : 0;
+      table_log_ << "PT_ENTRY"
+                 << ',' << sid << ',' << reason << ',' << access_count_
+                 << ',' << addr.template to<uint64_t>()
+                 << ',' << ip.template to<uint64_t>()
+                 << ',' << last_sig << ',' << curr_sig << ',' << observed_delta << ',' << depth
+                 << ',' << set << ',' << way
+                 << ",0,0,0,0,0"
+                 << ',' << PT.delta[set][way]
+                 << ',' << PT.c_delta[set][way]
+                 << ',' << PT.c_sig[set]
+                 << ',' << local_conf
+                 << ",0,0,0,0,0,0,0,0"
+                 << std::endl;
+    }
+  }
+
+  for (uint32_t set = 0; set < FILTER_SET; set++) {
+    table_log_ << "FILTER_ENTRY"
+               << ',' << sid << ',' << reason << ',' << access_count_
+               << ',' << addr.template to<uint64_t>()
+               << ',' << ip.template to<uint64_t>()
+               << ',' << last_sig << ',' << curr_sig << ',' << observed_delta << ',' << depth
+               << ',' << set << ",0"
+               << ',' << static_cast<uint32_t>(FILTER.valid[set])
+               << ",0,0,0,0,0,0,0,0"
+               << ',' << static_cast<uint32_t>(FILTER.useful[set])
+               << ',' << FILTER.remainder_tag[set]
+               << ",0,0,0"
+               << ',' << GHR.global_accuracy
+               << ',' << GHR.pf_issued
+               << ',' << GHR.pf_useful
+               << std::endl;
+  }
+
+  for (uint32_t i = 0; i < MAX_GHR_ENTRY; i++) {
+    table_log_ << "GHR_ENTRY"
+               << ',' << sid << ',' << reason << ',' << access_count_
+               << ',' << addr.template to<uint64_t>()
+               << ',' << ip.template to<uint64_t>()
+               << ',' << last_sig << ',' << curr_sig << ',' << observed_delta << ',' << depth
+               << ",0,0"
+               << ',' << static_cast<uint32_t>(GHR.valid[i])
+               << ",0,0"
+               << ',' << GHR.sig[i]
+               << ",0,0,0,0,0,0,0"
+               << ',' << i
+               << ',' << GHR.confidence[i]
+               << ',' << GHR.offset[i].template to<uint64_t>()
+               << ',' << GHR.global_accuracy
+               << ',' << GHR.pf_issued
+               << ',' << GHR.pf_useful
+               << std::endl;
+  }
+
+  table_log_ << "SNAPSHOT_END"
+             << ',' << sid << ',' << reason << ',' << access_count_
+             << ',' << addr.template to<uint64_t>()
+             << ',' << ip.template to<uint64_t>()
+             << ',' << last_sig << ',' << curr_sig << ',' << observed_delta << ',' << depth
+             << ",0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0"
+             << std::endl;
+}
 
 
 // TODO: Find a good 64-bit hash function

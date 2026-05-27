@@ -176,6 +176,19 @@ struct spp_dev : public champsim::modules::prefetcher {
   PREFETCH_FILTER FILTER;
   GLOBAL_REGISTER GHR;
 
+  void log_all_spp_tables(const char* reason, champsim::address addr, champsim::address ip,
+                          uint32_t last_sig, uint32_t curr_sig,
+                          typename offset_type::difference_type observed_delta, uint32_t depth);
+
+  std::ofstream full_log_;
+  uint64_t full_event_id_ = 0;
+  uint64_t full_candidate_id_ = 0;
+
+  std::ofstream table_log_;
+  uint64_t table_snapshot_id_ = 0;
+  uint64_t access_count_ = 0;
+  std::size_t table_dump_every_ = 0;
+
   // Post-prefetch-filter experiment logger.
   // Opened only when SPP_CAND_LOG is set.
   std::ofstream cand_log_;
