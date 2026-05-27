@@ -36,6 +36,7 @@ namespace knob
     extern uint64_t simulation_instructions;
     extern uint8_t  knob_cloudsuite;
     extern uint8_t  knob_low_bandwidth;
+    extern uint32_t trace_version;
     extern bool     measure_ipc;
     extern uint32_t measure_ipc_epoch;
     extern uint32_t dram_io_freq;
@@ -657,25 +658,12 @@ int main(int argc, char** argv)
         if (found_traces) {
             printf("trace_%d %s\n", count_traces, argv[i]);
 
-            sprintf(ooo_cpu[count_traces].trace_string, "%s", argv[i]);
-
-            char *full_name = ooo_cpu[count_traces].trace_string,
-                 *last_dot = strrchr(ooo_cpu[count_traces].trace_string, '.');
-
-			ifstream test_file(full_name);
-			if(!test_file.good()){
-				printf("TRACE FILE DOES NOT EXIST\n");
-				assert(false);
-			}
-
-
-            if (full_name[last_dot - full_name + 1] == 'g') // gzip format
-                sprintf(ooo_cpu[count_traces].gunzip_command, "gunzip -c %s", argv[i]);
-            else if (full_name[last_dot - full_name + 1] == 'x') // xz
-                sprintf(ooo_cpu[count_traces].gunzip_command, "xz -dc %s", argv[i]);
-            else {
-                cout << "ChampSim does not support traces other than gz or xz compression!" << endl;
-                assert(0);
+            try {
+                ooo_cpu[count_traces].trace_reader.reset(new TraceReader(argv[i]));
+            }
+            catch (const std::exception &e) {
+                cerr << "*** " << e.what() << " ***" << endl;
+                exit(1);
             }
 
             char *pch[100];
@@ -695,12 +683,6 @@ int main(int argc, char** argv)
                 seed_number += pch[count_str-3][j];
                 //printf("%c %d %d\n", pch[count_str-3][j], j, seed_number);
                 j++;
-            }
-
-            ooo_cpu[count_traces].trace_file = popen(ooo_cpu[count_traces].gunzip_command, "r");
-            if (ooo_cpu[count_traces].trace_file == NULL) {
-                printf("\n*** Trace file not found: %s ***\n\n", argv[i]);
-                assert(0);
             }
 
             count_traces++;
