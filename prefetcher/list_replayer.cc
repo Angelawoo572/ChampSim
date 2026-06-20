@@ -14,9 +14,6 @@
 using namespace std;
 
 namespace {
-vector<ListReplayer*> list_replayer_instances;
-bool list_replayer_atexit_registered = false;
-
 string trim_copy(string s)
 {
     auto not_space = [](unsigned char c) { return !std::isspace(c); };
@@ -24,24 +21,12 @@ string trim_copy(string s)
     s.erase(std::find_if(s.rbegin(), s.rend(), not_space).base(), s.end());
     return s;
 }
-
-void dump_all_list_replayers()
-{
-    for (auto* p : list_replayer_instances) {
-        if (p) p->dump_stats();
-    }
-}
 } // namespace
 
 ListReplayer::ListReplayer(string type, CACHE* cache)
     : Prefetcher(type), cache_(cache)
 {
     load_table();
-    list_replayer_instances.push_back(this);
-    if (!list_replayer_atexit_registered) {
-        std::atexit(dump_all_list_replayers);
-        list_replayer_atexit_registered = true;
-    }
 }
 
 ListReplayer::~ListReplayer() = default;
@@ -127,6 +112,9 @@ void ListReplayer::invoke_prefetcher(uint64_t /*pc*/, uint64_t /*address*/,
 
 void ListReplayer::dump_stats()
 {
+    // Pythia calls l2c_prefetcher_final_stats() explicitly at normal program
+    // completion. Do not also register an atexit handler, or this line appears
+    // twice and looks like duplicate replay activity.
     cerr << "[list_replayer] emitted " << emitted_
          << " candidates over " << counter_ << " ROI L2 LOAD accesses ("
          << matched_ << " matched access indices)" << endl;
