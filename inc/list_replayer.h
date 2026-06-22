@@ -2,6 +2,7 @@
 #define LIST_REPLAYER_H
 
 #include <cstdint>
+#include <functional>
 #include <string>
 #include <unordered_map>
 #include <vector>
