@@ -10,20 +10,21 @@
 
 class CACHE;
 
-// Replays externally generated prefetches at L2.
+// Replays externally generated L2 prefetches at an event identity that survives
+// timing-induced global reordering.
 //
 // PFETCH_LIST_PATH format:
-//   idx,prefetch_addr
-//   0,0x1234...
+//   pc,line,occ,prefetch_addr
+//   4201648,1207676451699,0,0x464bc80edc40
 //
-// PFETCH_REF_PATH format:
-//   idx,pc,line
-//   0,4257721,24804268350
+// `occ` is the zero-based occurrence count of a (pc,line) demand pair in the
+// no-prefetch oracle stream. The runtime ListReplayer maintains the same
+// per-(pc,line) counter after warmup and looks up this PC-line-occ trigger.
 //
-// idx is the zero-based ordinal of a post-warmup ROI L2 LOAD. The dense
-// reference stream is checked at every runtime L2 LOAD before an entry can be
-// emitted, so an early dynamic-stream shift cannot silently replay candidates
-// at the wrong accesses.
+// A global ROI-L2 ordinal cannot be used after prefetching: useful prefetches
+// change memory timing and may reorder independent L2 callbacks. This keyed
+// replay deliberately avoids assuming the no-prefetch global callback order is
+// invariant under the intervention.
 class ListReplayer : public Prefetcher
 {
 public:
@@ -36,28 +37,57 @@ public:
     void print_config();
 
 private:
-    struct ReferenceSignature {
+    struct TriggerKey {
         uint64_t pc = 0;
         uint64_t line = 0;
+        uint64_t occ = 0;
+
+        bool operator==(const TriggerKey& other) const
+        {
+            return pc == other.pc && line == other.line && occ == other.occ;
+        }
+    };
+
+    struct TriggerKeyHash {
+        size_t operator()(const TriggerKey& k) const
+        {
+            const size_t h1 = std::hash<uint64_t>()(k.pc);
+            const size_t h2 = std::hash<uint64_t>()(k.line);
+            const size_t h3 = std::hash<uint64_t>()(k.occ);
+            return h1 ^ (h2 << 1) ^ (h3 << 7);
+        }
+    };
+
+    struct PairKey {
+        uint64_t pc = 0;
+        uint64_t line = 0;
+
+        bool operator==(const PairKey& other) const
+        {
+            return pc == other.pc && line == other.line;
+        }
+    };
+
+    struct PairKeyHash {
+        size_t operator()(const PairKey& k) const
+        {
+            const size_t h1 = std::hash<uint64_t>()(k.pc);
+            const size_t h2 = std::hash<uint64_t>()(k.line);
+            return h1 ^ (h2 << 1);
+        }
     };
 
     void load_table();
-    void load_reference();
 
     CACHE* cache_;
-    std::unordered_map<uint64_t, std::vector<uint64_t>> table_;
-    std::vector<ReferenceSignature> reference_;
+    std::unordered_map<TriggerKey, std::vector<uint64_t>, TriggerKeyHash> table_;
+    std::unordered_map<PairKey, uint64_t, PairKeyHash> occurrences_;
     std::string path_;
-    std::string reference_path_;
     uint64_t counter_ = 0;
     uint64_t loaded_ = 0;
     uint64_t matched_ = 0;
     uint64_t emitted_ = 0;
     uint64_t rejected_lines_ = 0;
-    uint64_t reference_rejected_lines_ = 0;
-    uint64_t signature_mismatches_ = 0;
-    uint64_t reference_tail_accesses_ = 0;
-    bool reference_enabled_ = false;
     bool stats_dumped_ = false;
 };
 
